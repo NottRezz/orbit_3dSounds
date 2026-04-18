@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        * { margin: 0; padding: 0; }
+        body { background: transparent; overflow: hidden; pointer-events: none; }
+    </style>
+</head>
+<body>
+<script>
+'use strict';
+
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
+const sounds   = new Map(); // id -> { source, gain, panner }
+const bufCache = new Map(); // url -> Promise<AudioBuffer>
+
+// ─── Coordinate Conversion ────────────────────────────────────────────────────
+// GTA:  X=East  Y=North  Z=Up
+// Web Audio default: listener faces -Z, up = +Y
+// Mapping: gtaX → audioX | gtaY → audio -Z (depth) | gtaZ → audioY (height)
+function toAudio(x, y, z) { return [x, z, -y]; }
+
+// ─── Listener ─────────────────────────────────────────────────────────────────
+function updateListener(x, y, z, heading) {
+    const [ax, ay, az] = toAudio(x, y, z);
+    const rad = (heading ?? 0) * Math.PI / 180;
+    // forward in GTA: (sin H, cos H, 0) → audio: (sin H, 0, -cos H)
+    const fx = Math.sin(rad), fz = -Math.cos(rad);
+    const l = ctx.listener;
+    if (l.positionX !== undefined) {
+        l.positionX.setTargetAtTime(ax, ctx.currentTime, 0.01);
+        l.positionY.setTargetAtTime(ay, ctx.currentTime, 0.01);
+        l.positionZ.setTargetAtTime(az, ctx.currentTime, 0.01);
+        l.forwardX.setTargetAtTime(fx, ctx.currentTime, 0.01);
+        l.forwardY.setTargetAtTime(0,  ctx.currentTime, 0.01);
+        l.forwardZ.setTargetAtTime(fz, ctx.currentTime, 0.01);
+        l.upX.setTargetAtTime(0, ctx.currentTime, 0.01);
+        l.upY.setTargetAtTime(1, ctx.currentTime, 0.01);
+        l.upZ.setTargetAtTime(0, ctx.currentTime, 0.01);
+    } else {
+        l.setPosition(ax, ay, az);
+        l.setOrientation(fx, 0, fz, 0, 1, 0);
+    }
+}
+
+// ─── Buffer Fetch (deduplicated) ──────────────────────────────────────────────
+function fetchBuffer(url) {
+    if (bufCache.has(url)) return bufCache.get(url);
+    const promise = fetch(url)
+        .then(r => r.arrayBuffer())
+        .then(ab => ctx.decodeAudioData(ab));
+    bufCache.set(url, promise);
+    return promise;
+}
+
+// ─── Internal: build panner+gain chain ────────────────────────────────────────
+function buildChain(x, y, z, opts) {
+    const panner = ctx.createPanner();
+    panner.panningModel  = 'HRTF';
+    panner.distanceModel = 'inverse';
+    panner.refDistance   = opts.refDistance   ?? 8;
+    panner.maxDistance   = opts.maxDistance   ?? 150;
+    panner.rolloffFactor = opts.rolloffFactor ?? 1.2;
+
+    const [ax, ay, az] = toAudio(x, y, z);
+    if (panner.positionX !== undefined) {
+        panner.positionX.value = ax;
+        panner.positionY.value = ay;
+        panner.positionZ.value = az;
+    } else {
+        panner.setPosition(ax, ay, az);
+    }
+
+    const gain = ctx.createGain();
+    gain.gain.value = opts.volume ?? 1.0;
+
+    panner.connect(gain);
+    gain.connect(ctx.destination);
+    return { panner, gain };
+}
+
+// ─── Play Sound ───────────────────────────────────────────────────────────────
+async function playSound(id, url, x, y, z, opts = {}) {
+    stopSound(id); // clean up any existing instance with same id
+    if (ctx.state === 'suspended') ctx.resume();
+
+    const { panner, gain } = buildChain(x, y, z, opts);
+    let source;
+
+    if (opts.isOscillator) {
+        source = ctx.createOscillator();
+        source.type            = opts.oscType      ?? 'sine';
+        source.frequency.value = opts.oscFrequency ?? 440;
+        source.connect(panner);
+        source.start();
+        if (!opts.loop) {
+            const dur = opts.oscDuration ?? 2.0;
+            source.stop(ctx.currentTime + dur);
+        }
+    } else {
+        try {
+            const buffer = await fetchBuffer(url);
+            source = ctx.createBufferSource();
+            source.buffer = buffer;
+            source.loop   = opts.loop ?? false;
+            if (opts.playbackRate) source.playbackRate.value = opts.playbackRate;
+            source.connect(panner);
+            source.start(0, opts.offset ?? 0);
+        } catch (e) {
+            console.error('[orbit_sounds] load failed:', url, e);
+            panner.disconnect(); gain.disconnect();
+            return;
+        }
+    }
+
+    source.onended = () => {
+        sounds.delete(id);
+        panner.disconnect();
+        gain.disconnect();
+    };
+
+    sounds.set(id, { source, gain, panner });
+}
+
+// ─── Stop ─────────────────────────────────────────────────────────────────────
+function stopSound(id) {
+    const s = sounds.get(id);
+    if (!s) return;
+    try { s.source.stop(); } catch (_) {}
+    s.panner.disconnect();
+    s.gain.disconnect();
+    sounds.delete(id);
+}
+
+function stopAll() {
+    for (const id of [...sounds.keys()]) stopSound(id);
+}
+
+// ─── Live Updates ─────────────────────────────────────────────────────────────
+function updateSoundPosition(id, x, y, z) {
+    const s = sounds.get(id);
+    if (!s) return;
+    const [ax, ay, az] = toAudio(x, y, z);
+    if (s.panner.positionX !== undefined) {
+        s.panner.positionX.setTargetAtTime(ax, ctx.currentTime, 0.02);
+        s.panner.positionY.setTargetAtTime(ay, ctx.currentTime, 0.02);
+        s.panner.positionZ.setTargetAtTime(az, ctx.currentTime, 0.02);
+    } else {
+        s.panner.setPosition(ax, ay, az);
+    }
+}
+
+function updateSoundVolume(id, volume) {
+    const s = sounds.get(id);
+    if (!s) return;
+    s.gain.gain.setTargetAtTime(volume, ctx.currentTime, 0.05);
+}
+
+function setSoundLoop(id, loop) {
+    const s = sounds.get(id);
+    if (!s || !s.source.buffer) return;
+    s.source.loop = loop;
+}
+
+// ─── Message Router ───────────────────────────────────────────────────────────
+window.addEventListener('message', ({ data }) => {
+    const { type, d } = data;
+    switch (type) {
+        case 'updateListener':      updateListener(d.x, d.y, d.z, d.heading);           break;
+        case 'playSound':           playSound(d.id, d.url, d.x, d.y, d.z, d.options);   break;
+        case 'stopSound':           stopSound(d.id);                                      break;
+        case 'stopAll':             stopAll();                                             break;
+        case 'updateSoundPosition': updateSoundPosition(d.id, d.x, d.y, d.z);            break;
+        case 'updateSoundVolume':   updateSoundVolume(d.id, d.volume);                    break;
+        case 'setSoundLoop':        setSoundLoop(d.id, d.loop);                           break;
+    }
+});
+</script>
+</body>
+</html>
