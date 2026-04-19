@@ -54,7 +54,7 @@ if Config.occlusionEnabled then
             Wait(Config.occlusionTickMs)
             ped = PlayerPedId()
 
-            local origin = GetGameplayCamCoord()
+            local origin = GetEntityCoords(ped)
             local handles = {}
 
             -- Fire all raycasts in one pass (async batch)
