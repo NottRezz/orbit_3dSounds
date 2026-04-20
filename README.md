@@ -231,7 +231,7 @@ OGG Vorbis is recommended for FiveM NUI compatibility.
 
 ---
 
-## Integration Example (Superpower Script)
+## Integration Example
 
 ```lua
 local SOUND_ID = 'ability_hum_' .. GetPlayerServerId(PlayerId())
