@@ -211,9 +211,15 @@ local Config = {
     listenerTickMs   = 50,   -- camera sync rate (ms) — lower = more responsive HRTF
     occlusionTickMs  = 180,  -- raycast cycle rate (ms)
     occlusionEnabled = true,
+    listenerIdleMs   = 500,
+    listenerPosEps   = 0.0025,
+    listenerRotEps   = 0.05,
     occlusionMinGain = 0.10, -- volume floor when fully behind a wall
     occlusionSmooth  = 0.25, -- lerp factor per cycle toward target (0.0–1.0)
     occlusionFlags   = 1 + 16 + 256, -- raycast: world + buildings + vegetation
+    occlusionBudget  = 4,
+    occlusionMaxDist = 220.0,
+    occlusionGainEps = 0.01,
 }
 ```
 
@@ -231,7 +237,7 @@ OGG Vorbis is recommended for FiveM NUI compatibility.
 
 ---
 
-## Integration Example
+## Integration Example (Superpower Script)
 
 ```lua
 local SOUND_ID = 'ability_hum_' .. GetPlayerServerId(PlayerId())

@@ -48,8 +48,6 @@ const sounds   = new Map();
 const bufCache = new Map(); // url -> Promise<AudioBuffer>
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function toAudio(x, y, z) { return [x, z, -y]; }
-
 async function ensureRunning() {
     if (ctx.state === 'suspended') await ctx.resume();
 }
@@ -66,7 +64,9 @@ function fetchBuffer(url) {
 
 // ─── Listener ─────────────────────────────────────────────────────────────────
 function updateListener(x, y, z, pitch, yaw) {
-    const [ax, ay, az] = toAudio(x, y, z);
+    const ax = x;
+    const ay = z;
+    const az = -y;
     const pr = pitch * Math.PI / 180;
     const yr = yaw   * Math.PI / 180;
     const fx =  Math.cos(pr) * Math.sin(yr);
@@ -92,7 +92,9 @@ function updateListener(x, y, z, pitch, yaw) {
 
 // ─── Chain Builder ────────────────────────────────────────────────────────────
 function buildChain(x, y, z, opts) {
-    const [ax, ay, az] = toAudio(x, y, z);
+    const ax = x;
+    const ay = z;
+    const az = -y;
 
     const panner = ctx.createPanner();
     panner.panningModel  = 'HRTF';
@@ -205,7 +207,7 @@ function stopSoundFade(id, duration = 0.4) {
 }
 
 function stopAll() {
-    for (const id of [...sounds.keys()]) stopSound(id);
+    for (const id of sounds.keys()) stopSound(id);
 }
 
 // ─── Play (3D) ────────────────────────────────────────────────────────────────
@@ -316,7 +318,9 @@ async function play2D(id, url, opts = {}) {
 function updateSoundPosition(id, x, y, z) {
     const s = sounds.get(id);
     if (!s || !s.source) return;
-    const [ax, ay, az] = toAudio(x, y, z);
+    const ax = x;
+    const ay = z;
+    const az = -y;
     const tc = 0.02;
     if (s.panner.positionX !== undefined) {
         s.panner.positionX.setTargetAtTime(ax, ctx.currentTime, tc);
